@@ -55,10 +55,50 @@ def find_subsequence_start(sequence, subseq) -> int | None:
     return None
 
 
+def find_needle_token_start(tokenizer, input_ids: list[int], needle_text: str) -> int | None:
+    """Handle tokenizers where the target span is encoded with leading whitespace."""
+    candidates = [
+        needle_text,
+        f" {needle_text}",
+        needle_text.rstrip("."),
+        f" {needle_text.rstrip('.')}",
+    ]
+    for candidate in candidates:
+        needle_tokens = tokenizer.encode(candidate, add_special_tokens=False)
+        start = find_subsequence_start(input_ids, needle_tokens)
+        if start is not None:
+            return start
+    return None
+
+
 def get_decoder_layers(model):
     if hasattr(model, "model") and hasattr(model.model, "layers"):
         return model.model.layers
     raise RuntimeError("Unsupported model structure: cannot find model.model.layers")
+
+
+def get_attention_head_dim(model, layer) -> tuple[int, int]:
+    """Infer query-head count and head dimension across transformer variants."""
+    attn = layer.self_attn
+
+    head_dim = getattr(attn, "head_dim", None)
+    if head_dim is None:
+        hidden_size = getattr(attn, "hidden_size", None) or getattr(model.config, "hidden_size", None)
+        num_heads = getattr(attn, "num_heads", None) or getattr(model.config, "num_attention_heads", None)
+        if hidden_size is None or num_heads is None:
+            raise RuntimeError("Cannot infer attention head dimension")
+        head_dim = hidden_size // num_heads
+
+    num_q_heads = (
+        getattr(attn, "num_heads", None)
+        or getattr(attn, "num_attention_heads", None)
+        or getattr(getattr(attn, "config", None), "num_attention_heads", None)
+        or getattr(model.config, "num_attention_heads", None)
+    )
+    if num_q_heads is None:
+        raise RuntimeError("Cannot infer attention head count")
+
+    return num_q_heads, head_dim
 
 
 def gather_last_token_queries(outputs, model, layer_idx: int) -> torch.Tensor:
@@ -74,8 +114,7 @@ def gather_last_token_queries(outputs, model, layer_idx: int) -> torch.Tensor:
 
     q = layer.self_attn.q_proj(layer_input)
     bsz = q.shape[0]
-    num_q_heads = layer.self_attn.num_heads
-    head_dim = layer.self_attn.head_dim
+    num_q_heads, head_dim = get_attention_head_dim(model, layer)
     return q.view(bsz, 1, num_q_heads, head_dim).transpose(1, 2).contiguous()  # (B, H_q, 1, D)
 
 
@@ -164,8 +203,7 @@ def run_real_model_validation(model_name: str, token_schedule: Iterable[int]):
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=target_tokens + 256).to("cuda")
 
         seq_len = inputs["input_ids"].shape[1]
-        needle_tokens = tokenizer.encode("AURORA-7749", add_special_tokens=False)
-        needle_start = find_subsequence_start(inputs["input_ids"][0].tolist(), needle_tokens)
+        needle_start = find_needle_token_start(tokenizer, inputs["input_ids"][0].tolist(), "AURORA-7749")
 
         print(f"{'=' * 70}")
         print(f"[REAL] Context: {seq_len} tokens | Needle at token {needle_start}")
