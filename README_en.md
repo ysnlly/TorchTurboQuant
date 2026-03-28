@@ -1,5 +1,7 @@
 # TurboQuant (PyTorch)
 
+[中文](./README.md) | [English](./README_en.md)
+
 A PyTorch implementation of TurboQuant for compressing LLM KV caches while preserving attention-score quality as much as possible.
 
 > This README is organized in a usage-first order:
@@ -173,10 +175,24 @@ Typical behavior on synthetic tests:
 - QJL correction drives inner-product bias close to zero
 - 3-bit/4-bit usually provide a good compression vs. quality trade-off
 
-From earlier reference runs (d=128):
-- 4-bit: ~3.8x compression
-- 3-bit: ~5.0x compression
-- 2-bit: ~7.3x compression
+Latest Needle-in-Haystack results (from the validation screenshot in this repo, d=128):
+
+| Context | Bit | Compression | Score Cosine | Top-1 | Top-5 | Avg Needle Rank |
+|---|---:|---:|---:|---:|---:|---:|
+| 2065 tokens | 2-bit | 7.31x | 0.898703 | 26.0% | 56.4% | 489.0 |
+| 2065 tokens | 3-bit | 5.02x | 0.957262 | 52.4% | 77.1% | 452.5 |
+| 2065 tokens | 4-bit | 3.82x | 0.985677 | 69.6% | 88.5% | 412.3 |
+| 4090 tokens | 2-bit | 7.31x | 0.895481 | 22.2% | 52.6% | 1204.2 |
+| 4090 tokens | 3-bit | 5.02x | 0.956351 | 48.8% | 74.0% | 1105.3 |
+| 4090 tokens | 4-bit | 3.82x | 0.985212 | 67.0% | 86.5% | 897.7 |
+| 8221 tokens | 2-bit | 7.31x | 0.893167 | 20.1% | 45.8% | 2233.1 |
+| 8221 tokens | 3-bit | 5.02x | 0.955408 | 42.7% | 72.7% | 1980.6 |
+| 8221 tokens | 4-bit | 3.82x | 0.984929 | 60.2% | 85.2% | 1807.6 |
+
+Takeaways (consistent with previous trends):
+- Longer context makes retrieval harder (Top-1/Top-5 decrease, Avg Needle Rank increases).
+- For the same context, higher bit width (2->3->4) gives better score cosine and retrieval metrics.
+- 3-bit remains a practical balance; 4-bit has higher fidelity; 2-bit compresses most but loses more retrieval quality.
 
 Exact values can vary with model, context length, seed, and hardware. Treat local reruns as ground truth.
 
