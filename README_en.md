@@ -2,26 +2,18 @@
 
 [中文](./README.md) | [English](./README_en.md)
 
-A PyTorch implementation of TurboQuant for compressing LLM KV caches while preserving attention-score quality as much as possible.
-
-> This README is organized in a usage-first order:
-> 1) get it running first,
-> 2) then dive into technical details and results.
-
-For Chinese documentation, see [`README.md`](./README.md).
-
----
+TurboQuant is a PyTorch implementation for KV-cache compression in long-context LLM inference. The goal is to significantly reduce memory usage while preserving attention-score quality.
 
 ## 1. Quick Start
 
-## 1.1 Requirements
+### Requirements
 
 - Python 3.10+
 - PyTorch 2.0+
 - scipy
-- (Optional) transformers / accelerate / bitsandbytes: only required for real-model validation
+- (Optional) transformers / accelerate / bitsandbytes (only needed for real-model validation)
 
-Install dependencies:
+### Install dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -33,149 +25,65 @@ If you need CUDA PyTorch (example):
 pip install torch --index-url https://download.pytorch.org/whl/cu128
 ```
 
----
+### Validation commands (recommended order)
 
-## 1.2 Minimal Usage (30 seconds)
-
-### Option A: Paper-first API (recommended)
-
-```python
-import torch
-from turboquant import PaperTurboQuantKVCodec
-
-# Example: single-head, seq=256, dim=128
-keys = torch.randn(256, 128)
-values = torch.randn(256, 128)
-queries = torch.randn(256, 128)
-
-codec = PaperTurboQuantKVCodec(d_key=128, d_value=128, bits=3, device="cpu")
-codec.append(keys, values)
-
-# Estimate attention scores directly from compressed keys
-scores = codec.attention_scores(queries)
-
-# Values use the reconstruction path
-reconstructed_values = codec.get_values()
-
-print(scores.shape, reconstructed_values.shape)
-```
-
----
-
-## 1.3 Validation Commands (recommended order)
-
-### 1) Smoke test for the new API
+1) API smoke test
 
 ```bash
 python -m turboquant.test_paper_api
 ```
 
-### 2) Full synthetic validation (CPU-friendly)
+2) Synthetic validation (CPU-friendly)
 
 ```bash
 python -m turboquant.test_turboquant
 ```
 
-This includes:
-- Lloyd-Max codebook properties
-- MSE distortion vs. theoretical upper bounds
-- QJL inner-product unbiasedness checks
-- Needle-in-Haystack retrieval
-- GPU benchmark (if CUDA is available)
-
-### 3) Real-model validation (heavy)
+3) Real-model validation (resource intensive)
 
 ```bash
 python -m turboquant.validate
 ```
 
-If CUDA is unavailable or HuggingFace download fails, run the fallback mode:
+If CUDA is unavailable or model download fails:
 
 ```bash
 python -m turboquant.validate --synthetic
 ```
 
-If you only want API limitation notes:
+## 2. Method Summary
 
-```bash
-python -m turboquant.validate --api
-```
+TurboQuant compresses key vectors in two stages:
 
----
+1. **Stage 1 (MSE)**: random orthogonal rotation + per-dimension Lloyd-Max quantization.
+2. **Stage 2 (QJL)**: random projection on Stage-1 residuals, storing sign bits only (1-bit).
 
-## 1.4 Project Layout
-
-```text
-requirements.txt        # Python dependencies
-
-turboquant/
-  __init__.py           # Package exports
-  lloyd_max.py          # Lloyd-Max codebook solver
-  turboquant.py         # Internal legacy module (not exported as public API)
-  compressors.py        # Tensor-oriented compressors with true bit-packing
-
-  # Paper-first API
-  stage1.py             # Stage 1: rotation + Lloyd-Max
-  stage2.py             # Stage 2: QJL residual signs + correction
-  estimator.py          # <q, k> estimator
-  kv_codec.py           # PaperTurboQuantKVCodec
-  types.py              # Typed compressed representations
-
-  # Tests / scripts
-  test_paper_api.py
-  test_turboquant.py
-  validate.py
-```
-
----
-
-## 2. Technical Details
-
-TurboQuant handles key vectors in two stages:
-
-1. **Stage 1 (MSE):** random orthogonal rotation + per-dimension Lloyd-Max quantization
-2. **Stage 2 (QJL):** random projection of Stage-1 residuals, storing only sign bits (1-bit)
-
-The asymmetric inner-product estimator is:
+The inner-product estimator is:
 
 \[
-\langle q, k \rangle \approx \langle q, k_{mse} \rangle + \|r\|\frac{\sqrt{\pi/2}}{m}\langle S q, \text{sign}(S r) \rangle
+\langle q, k \rangle
+\approx
+\langle q, k_{\mathrm{mse}} \rangle
++
+\|r\|\,\frac{\sqrt{\pi/2}}{m}\,\left\langle S q, \operatorname{sign}(S r) \right\rangle,
 \]
 
-Where:
-- \(k_{mse}\): Stage-1 reconstruction
-- \(r = k - k_{mse}\)
+where:
+
+- \(k_{\mathrm{mse}}\): Stage-1 reconstruction
+- \(r = k - k_{\mathrm{mse}}\)
 - \(S\): Gaussian random matrix
+- \(m\): Stage-2 projection dimension
 
-### Why this design?
+## 3. Results Snapshot (Synthetic)
 
-- MSE-only quantization can leave systematic inner-product bias.
-- The QJL residual term is not trying to recover vectors perfectly; it targets inner-product correction.
-- For attention, preserving inner-product structure is usually more important than per-vector reconstruction fidelity.
+Typical trends:
 
----
+- higher bit width -> lower MSE
+- QJL correction pushes inner-product bias close to zero
+- 3-bit/4-bit usually provide a better quality-compression balance
 
-## 3. API Surface
-
-The public package API is unified around KVCodec / staged components:
-
-- `Stage1MSEQuantizer`
-- `Stage2QJLResidual`
-- `PaperTurboQuantKVCodec`
-
-`TurboQuantMSE` / `TurboQuantProd` / `TurboQuantKVCache` remain internal-only and are no longer exported at package level.
-
----
-
-## 4. Results and Observations
-
-Typical behavior on synthetic tests:
-
-- higher bits -> lower MSE
-- QJL correction drives inner-product bias close to zero
-- 3-bit/4-bit usually provide a good compression vs. quality trade-off
-
-Latest Needle-in-Haystack results (from the validation screenshot in this repo, d=128):
+Example Needle-in-Haystack results (d=128):
 
 | Context | Bit | Compression | Score Cosine | Top-1 | Top-5 | Avg Needle Rank |
 |---|---:|---:|---:|---:|---:|---:|
@@ -189,47 +97,13 @@ Latest Needle-in-Haystack results (from the validation screenshot in this repo, 
 | 8221 tokens | 3-bit | 5.02x | 0.955408 | 42.7% | 72.7% | 1980.6 |
 | 8221 tokens | 4-bit | 3.82x | 0.984929 | 60.2% | 85.2% | 1807.6 |
 
-Takeaways (consistent with previous trends):
-- Longer context makes retrieval harder (Top-1/Top-5 decrease, Avg Needle Rank increases).
-- For the same context, higher bit width (2->3->4) gives better score cosine and retrieval metrics.
-- 3-bit remains a practical balance; 4-bit has higher fidelity; 2-bit compresses most but loses more retrieval quality.
+> Results vary with model, context length, random seed, and hardware. Treat local reruns as the source of truth.
 
-Exact values can vary with model, context length, seed, and hardware. Treat local reruns as ground truth.
-
----
-
-## 5. FAQ
-
-### Q1: Why does `validate.py` fail sometimes?
-Common causes:
-- no HuggingFace/network access
-- missing CUDA / bitsandbytes
-- insufficient VRAM
-
-Now the script auto-falls back to synthetic mode when real-model validation fails (unless `--no-fallback` is set).
-
-### Q2: Which bit width should I start with?
-Practical default:
-- start with 3-bit
-- try 2-bit for more aggressive compression
-- use 4-bit for safer score fidelity
-
-### Q3: Can I run this validation via hosted model APIs?
-Usually no. This validation needs internal tensors (per-layer hidden states, `q_proj`, KV cache), which generic chat/completions APIs do not expose.
-
-Practical options:
-- run local/self-hosted open-weight models with internal-tensor access
-- or run `python -m turboquant.validate --synthetic` for offline algorithm checks
-
----
-
-## 6. References
+## References
 
 - TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate (ICLR 2026)
 - QJL: 1-Bit Quantized JL Transform for KV Cache Quantization with Zero Overhead
 - PolarQuant: Quantizing KV Caches with Polar Transformation
-
----
 
 ## License
 
