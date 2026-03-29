@@ -60,20 +60,20 @@ TurboQuant 对 key 向量采用两阶段压缩：
 
 内积估计器为：
 
-\[
+$$
 \langle q, k \rangle
 \approx
 \langle q, k_{\mathrm{mse}} \rangle
 +
-\|r\|\,\frac{\sqrt{\pi/2}}{m}\,\left\langle S q, \operatorname{sign}(S r) \right\rangle,
-\]
+\lVert r \rVert \,\frac{\sqrt{\pi/2}}{m}\,\left\langle S q, \mathrm{sign}(S r) \right\rangle
+$$
 
 其中：
 
-- \(k_{\mathrm{mse}}\)：Stage 1 重建结果
-- \(r = k - k_{\mathrm{mse}}\)
-- \(S\)：高斯随机矩阵
-- \(m\)：Stage 2 投影维度
+- $k_{\mathrm{mse}}$: Stage 1 重建结果
+- $r = k - k_{\mathrm{mse}}$
+- $S$: 高斯随机矩阵
+- $m$: Stage 2 投影维度
 
 ## 3. 效果摘要（合成测试）
 
